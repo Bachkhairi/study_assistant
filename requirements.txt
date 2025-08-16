@@ -11,6 +11,7 @@ chromadb
 
 # Transformers / Embeddings 
 
+
 torch
 transformers
 numpy
