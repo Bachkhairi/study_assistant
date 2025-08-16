@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+from pathlib import Path
+import shutil
+
+import warnings
+
+warnings.filterwarnings("ignore")  # Ignore all warnings
+
+# Add the base project directory to sys.path
+BASE_DIR = os.path.expanduser('~/ai_assistant')
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+
+import click
+import json
+from app.services.knowledgebaseQA import QueryPipeline
+from app.services.summary_pipeline import SummaryPipeline
+from app.services.videoQA import VideoQA
+from app.services.notion_manager import NotionManager
+from app.utils.descriptor import Descriptor
+from app.memory.session_manager import SessionManager
+from app.services.session import SessionService
+
+# Constants
+
+DATA_PATH = Path(__file__).resolve().parents[2] / "data"
+
+BASE_VIDEO_DIR = Path(__file__).resolve().parents[2] / "video_data"
+
+DATA_QA_PATH = Path(__file__).resolve().parents[2] / "data"
+CHROMA_BASE_DIR = Path(__file__).resolve().parents[2] / "chroma_db"
+SESSIONS_DIR = Path(__file__).resolve().parents[2] / "logs"
+
+current_project = {"name": None}
+
+# Services
+service = SessionService()
+
+
+@click.group()
+def cli():
+    """Main CLI for managing sessions, summaries, KB, and video QA."""
+    pass
+
+@cli.group()
+def sessions():
+    """Session management commands."""
+    pass
+
+@cli.group(name="query_pipeline")
+def query_pipeline():
+    """Knowledge Base indexing and querying commands."""
+    CHROMA_BASE_DIR.mkdir(exist_ok=True, parents=True)
+    DATA_PATH.mkdir(exist_ok=True, parents=True)
+
+@cli.group(name="videoqa")
+def videoqa():
+    """VideoQA commands: run, list, use, delete."""
+    BASE_VIDEO_DIR.mkdir(exist_ok=True, parents=True)
+
+
+# =========================
+# Session Commands
+# =========================
+
+
+@sessions.command("list")
+def sessions_list():
+    """List all saved sessions with IDs and titles."""
+    sessions = service.list_sessions()  # dict: {id: title}
+
+    if not sessions:
+        click.secho("No sessions found.", fg="yellow")
+        return
+
+    click.secho("\nAvailable Sessions:\n", fg="cyan", bold=True)
+    click.secho(f"{'ID':<20} | {'Title'}", fg="white", bold=True)
+    click.secho("-" * 50, fg="white")
+
+    for session_id, title in sessions.items():
+        click.secho(f"{session_id:<20} | {title}", fg="green")
+
+
+
+
+@sessions.command("create_session")
+@click.argument("session_title")
+@click.argument("notion_page_id")
+def create_session(session_title,notion_page_id):
+    """Create a new session with the given Notion page ID and return its ID."""
+    session_id = service.create_session(session_title=session_title,notion_page_id=notion_page_id)
+    os.makedirs(os.path.join(SESSIONS_DIR,session_id), exist_ok=True)
+    click.echo(f"New session created: {session_id} - Notion Page ID: {notion_page_id}")
+
+
+
+
+@sessions.command("use")
+@click.argument("session_id")
+def sessions_use(session_id):
+    """Select a session to use as current by ID ."""
+    service.load_all_sessions()
+    if session_id in service.sessions:
+        service.current = session_id
+        click.secho(f"✅ Current session set: {session_id}", fg="green")
+    else:
+        click.secho(f"❌ Session ID '{session_id}' not found.", fg="red")
+
+
+@sessions.command("add-summary")
+@click.option("--session", "session_id", required=False, help="Session ID to add the summary to.")
+@click.option("--file", "file_path", required=False, type=click.Path(exists=True), help="Path to a text file containing the notes.")
+def add_summary(session_id, file_path):
+    """Add a summary to a session. If no session is specified, uses the current session."""
+    
+    service.load_all_sessions()
+    # 1️⃣ Resolve session
+    if not session_id:
+        if service.current:
+            session_id = service.current
+        else:
+            # prompt user to select a session
+            sessions = service.list_sessions()
+            if not sessions:
+                click.secho("❌ No sessions available. Create one first.", fg="red")
+                return
+            click.secho("Please select a session ID from the list:\n", fg="cyan")
+            for sid, title in sessions.items():
+                click.echo(f"{sid}  |  {title}")
+            session_id = click.prompt("Enter session ID")
+            if session_id not in service.sessions:
+                click.secho(f"❌ Invalid session ID: {session_id}", fg="red")
+                return
+
+    # 2️⃣ Get summary text
+    if file_path:
+        with open(file_path, "r") as f:
+            summary_text = f.read()
+    else:
+        # open temporary file in editor
+        summary_text = click.edit("\n# Write your notes above this line. Lines starting with # are ignored.")
+        if summary_text is None:
+            click.secho("❌ No summary text provided.", fg="red")
+            return
+        # remove commented lines
+        summary_text = "\n".join([line for line in summary_text.splitlines() if not line.startswith("#")]).strip()
+
+    # 3️⃣ Add summary
+    updated_descriptor = service.add_summary(session_id, summary_text)
+    click.secho("✅ Summary added successfully.", fg="green")
+    click.secho(f"Updated Descriptor:\n {updated_descriptor}", fg="cyan")
+
+
+
+
+@sessions.command("get_descriptor")
+@click.option("--session", "session_id", required=False, help="Session ID (optional, defaults to current session).")
+def get_descriptor(session_id):
+    """Get the current descriptor of a session."""
+    service.load_all_sessions()
+    if not session_id:
+        if service.current:
+            session_id = service.current
+        else:
+            click.secho("❌ No session selected. Use `sessions use <id>` first.", fg="red")
+            return
+
+    descriptor = service.get_descriptor(session_id)
+    click.secho(f"Descriptor:\n{descriptor}", fg="cyan")
+
+
+@sessions.command("get_history")
+@click.option("--session", "session_id", required=False, help="Session ID (optional, defaults to current session).")
+def get_history(session_id):
+    """Get the chat history of a session."""
+    service.load_all_sessions()
+    if not session_id:
+        if service.current:
+            session_id = service.current
+        else:
+            click.secho("❌ No session selected. Use `sessions use <id>` first.", fg="red")
+            return
+
+    history = service.get_history(session_id)
+    click.secho(json.dumps(history, indent=2), fg="green")
+
+
+@sessions.command()
+def load_all_sessions():
+    """Load all sessions from disk."""
+    service.load_all_sessions()
+    click.echo("✅ All sessions loaded.")
+
+
+# =========================
+# Video QA Command
+# =========================
+
+
+
+# ----------------------------
+# Run VideoQA
+# ----------------------------
+@videoqa.command("run")
+@click.option("--title", required=False, help="Optional title for the video project (folder name).")
+@click.option("--url", required=True, help="YouTube or video URL.")
+@click.option("--query", required=True, help="Question to ask about the video.")
+@click.option("--interval", default=5, show_default=True)
+@click.option("--k_text", default=10, show_default=True)
+@click.option("--k_images", default=3, show_default=True)
+def run_videoqa(title, url, query, interval, k_text, k_images):
+    """Download, process video and run VideoQA."""
+    if not title:
+        title = url.split("/")[-1].replace("?", "_")  # fallback folder name
+    video_dir = BASE_VIDEO_DIR / title
+    video_dir.mkdir(parents=True, exist_ok=True)
+
+    transcript_path = video_dir / "transcript.txt"
+    frames_dir = video_dir / "screenshots"
+    frames_dir.mkdir(exist_ok=True)
+    audio_path = video_dir / "audio.mp3"
+    video_path = video_dir / "video.mp4"
+    screenshot_dir = video_dir / "screenshots"
+    screenshot_dir.mkdir(exist_ok=True)
+
+    video_qa = VideoQA(
+        transcript_path=str(transcript_path),
+        frames_dir=str(frames_dir),
+        audio_path=str(audio_path),
+        video_path=str(video_path),
+        screenshot_dir=str(screenshot_dir),
+        interval=interval,
+        k_text=k_text,
+        k_images=k_images,
+    )
+    video_qa.run(url, query)
+
+
+@videoqa.command("list")
+def list_videos():
+    """List all downloaded video projects."""
+    videos = [p.name for p in BASE_VIDEO_DIR.iterdir() if p.is_dir()]
+    if not videos:
+        click.secho("No video projects found.", fg="yellow")
+        return
+    click.secho("Downloaded video projects:\n", fg="cyan", bold=True)
+    for v in videos:
+        click.secho(f"- {v}", fg="green")
+
+
+@videoqa.command("delete")
+@click.argument("title")
+def delete_video(title):
+    """Delete a video project completely."""
+    video_dir = BASE_VIDEO_DIR / title
+    if not video_dir.exists():
+        click.secho(f"❌ Video project '{title}' not found.", fg="red")
+        return
+    confirm = click.confirm(f"Are you sure you want to delete '{title}' and all its data?")
+    if confirm:
+        shutil.rmtree(video_dir)
+        click.secho(f"✅ Video project '{title}' deleted.", fg="green")
+
+
+
+# =========================
+# Knowledge Base Commands
+# =========================
+
+
+
+
+@query_pipeline.command("create")
+@click.argument("title")
+def create_project(title):
+    """Create a new Knowledge Base project."""
+    project_dir = DATA_PATH / title
+    if project_dir.exists():
+        click.secho(f"❌ Project '{title}' already exists.", fg="red")
+        return
+    project_dir.mkdir(parents=True)
+    # Store notion_folder_id in memory for the current session
+    current_project["name"] = title
+    click.secho(f"✅ Project '{title}' created.", fg="green")
+
+
+
+@query_pipeline.command("list")
+def list_projects():
+    """List all Knowledge Base projects."""
+    projects = [p.name for p in DATA_PATH.iterdir() if p.is_dir()]
+    if not projects:
+        click.secho("No projects found.", fg="yellow")
+        return
+    click.secho("Knowledge Base Projects:\n", fg="cyan", bold=True)
+    for idx, name in enumerate(projects, start=1):
+        click.secho(f"{idx}. {name}", fg="green")
+
+
+@query_pipeline.command("use")
+@click.argument("selector", required=False)
+def use_project(selector):
+    """Select a project to be the current project."""
+    projects = [p.name for p in DATA_PATH.iterdir() if p.is_dir()]
+    if not projects:
+        click.secho("❌ No projects found. Create one first.", fg="red")
+        return
+
+    # If selector not provided, show list
+    if not selector:
+        click.secho("Available projects:\n", fg="cyan", bold=True)
+        for idx, name in enumerate(projects, start=1):
+            click.secho(f"{idx}. {name}", fg="green")
+        choice = click.prompt("Enter project number to select", type=int)
+        if 1 <= choice <= len(projects):
+            selector = projects[choice - 1]
+        else:
+            click.secho("❌ Invalid selection.", fg="red")
+            return
+
+    # Verify project exists
+    project_dir = DATA_PATH / selector
+    if not project_dir.exists():
+        click.secho(f"❌ Project '{selector}' not found.", fg="red")
+        return
+
+    current_project["name"] = selector
+    # Ask for Notion ID once when selecting a project
+    notion_folder_id = click.prompt(f"Enter Notion folder ID for '{selector}'")
+    current_project["notion_folder_id"] = notion_folder_id
+    click.secho(f"✅ Current project set: {selector} (Notion ID: {notion_folder_id})", fg="green")
+
+
+
+
+@query_pipeline.command("index")
+@click.option("--folder-name", default="", help="Optional subfolder in Notion hierarchy to index.")
+def index_project(folder_name):
+    """Index the currently selected Knowledge Base project into Chroma DB."""
+    if not current_project["name"]:
+        click.secho("❌ No project selected. Use `query_pipeline use <project>` first.", fg="red")
+        return
+
+    project_name = current_project["name"]
+    notion_folder_id = current_project["notion_folder_id"]
+    persist_dir = CHROMA_BASE_DIR / project_name
+    persist_dir.mkdir(exist_ok=True, parents=True)
+
+    pipeline = QueryPipeline(
+        data_path=str(DATA_PATH / project_name),       # only data of this project
+        notion_project_id=notion_folder_id,
+        persist_directory=str(persist_dir)
+    )
+    pipeline.index_knowlegde_base(folder_name=folder_name)
+    click.secho(f"✅ Project '{project_name}' indexed successfully.", fg="green")
+
+
+
+
+
+@query_pipeline.command("ask")
+@click.argument("question")
+@click.option("--folder-name", default="", help="Optional subfolder in Notion hierarchy to index before asking.")
+def ask_question(question,folder_name=""):
+    """Prompt for project and Notion folder ID, then index and ask a question in one step."""
+    
+    # Prompt for project if not set
+    if not current_project.get("name"):
+        projects = [p.name for p in DATA_PATH.iterdir() if p.is_dir()]
+        if not projects:
+            click.secho("❌ No projects found. Create one first.", fg="red")
+            return
+        
+        click.secho("Available projects:\n", fg="cyan", bold=True)
+        for idx, name in enumerate(projects, start=1):
+            click.secho(f"{idx}. {name}", fg="green")
+        choice = click.prompt("Enter project number to select", type=int)
+        
+        if 1 <= choice <= len(projects):
+            current_project["name"] = projects[choice - 1]
+            folder_name=current_project["name"]
+        else:
+            click.secho("❌ Invalid selection.", fg="red")
+            return
+    
+    # Prompt for Notion folder ID if not set
+    if not current_project.get("notion_folder_id") :
+        notion_folder_id = click.prompt(f"Enter Notion folder ID for '{folder_name}'")
+        current_project["notion_folder_id"] = notion_folder_id
+    
+    project_name = current_project["name"]
+    notion_folder_id = current_project["notion_folder_id"]
+
+    persist_dir = CHROMA_BASE_DIR / project_name
+    persist_dir.mkdir(exist_ok=True, parents=True)
+
+    # Initialize pipeline
+    pipeline = QueryPipeline(
+        data_path=str(DATA_PATH / project_name),
+        notion_project_id=notion_folder_id,
+        persist_directory=str(persist_dir)
+    )
+
+    if any(persist_dir.iterdir()):
+        click.secho("📂 Existing index found. Skipping indexing...", fg="yellow")
+    else:
+        click.secho("📦 Indexing knowledge base...", fg="cyan")
+        pipeline.index_knowlegde_base(folder_name=project_name)
+
+    # Step 2: Ask question
+    click.secho("❓ Asking question...", fg="cyan")
+    pipeline.answer_question(question=question)
+
+    click.secho("✅ Done.", fg="green")
+
+
+
+if __name__ == "__main__":
+    cli()
