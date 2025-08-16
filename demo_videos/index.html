@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Study Assistant Demo Videos</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: linear-gradient(135deg, #f0f2f5, #e6ecf2);
+      color: #1a1a1a;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+
+    h1 {
+      margin: 40px 0;
+      font-size: 3rem;
+      font-weight: 800;
+      background: linear-gradient(90deg, #005ea6, #0077cc);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      text-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+      position: relative;
+      animation: fadeIn 1s ease-out;
+    }
+
+    h1::after {
+      content: '';
+      position: absolute;
+      bottom: -10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100px;
+      height: 4px;
+      background: linear-gradient(90deg, #005ea6, #0077cc);
+      border-radius: 2px;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .video-links {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      width: 100%;
+      max-width: 600px;
+      margin: 20px 0;
+    }
+
+    a {
+      text-decoration: none;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #ffffff;
+      background: #005ea6;
+      padding: 15px 30px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+    }
+
+    a:hover {
+      background: #0077cc;
+      transform: translateY(-3px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+    }
+
+    a:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+
+    @media (max-width: 600px) {
+      h1 {
+        font-size: 2.2rem;
+        letter-spacing: 1.5px;
+      }
+
+      a {
+        font-size: 1.1rem;
+        padding: 12px 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Study Assistant Demo Videos</h1>
+  <div class="video-links">
+    <a href="summarizer.html">Progressive Summarizer Demo</a>
+    <a href="KB_Qa.html">Knowledge Base Q&A Demo</a>
+    <a href="videoqa.html">YouTube Q&A Demo</a>
+  </div>
+</body>
+</html>
