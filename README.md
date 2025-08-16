@@ -4,6 +4,12 @@
 
 A modular CLI tool that helps you learn faster by automating note-taking, summarization, and knowledge retrieval.
 
+## 🎥 Demo Videos
+
+- [Progressive Summarizer](https://bachkhairi.github.io/study_assistant/demo_videos/summarizer.html)  
+- [Knowledge Base Q&A](https://bachkhairi.github.io/study_assistant/demo_videos/KB_Qa.html)  
+- [YouTube Q&A](https://bachkhairi.github.io/study_assistant/demo_videos/videoqa.html)  
+
 ## Table of Contents
 
 - [Overview](#overview)
